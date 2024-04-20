@@ -1,0 +1,76 @@
+#This Azure Pipelines YAML file defines a CI/CD pipeline for a backend API application. The pipeline has two stages:
+
+#1. **Build**: This stage builds a Docker image for the backend API and pushes it to Docker Hub.
+#2. **Deploy**: This stage deploys the Docker image to an Azure Container Apps environment.
+
+#The pipeline is triggered on changes to the `main` branch, and only for changes to the `azure-pipelines.yaml` file. The pipeline uses the following variables:
+#- `IMAGE_NAME`: The name of the Docker image to be built and pushed.
+#- `CONTAINERAPPS_APP`: The name of the Azure Container Apps application to deploy to.
+#- `CONTAINERAPPS_ENVIRONMENT`: The name of the Azure Container Apps environment to deploy to.
+#- `RESOURCE_GROUP`: The name of the Azure resource group containing the Container Apps environment.
+#- `TAG`: The build ID, which is used as the Docker image tag.
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - azure-pipelines.yaml
+    exclude:
+    - Readme.md
+
+resources:
+- repo: self
+
+variables:
+  IMAGE_NAME: phani111docker/album-backend-api
+  CONTAINERAPPS_APP: album-backend-api
+  CONTAINERAPPS_ENVIRONMENT: aca-environment
+  RESOURCE_GROUP: rg-containerapps-azure-pipelines
+  TAG: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  displayName: Build and push image
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+
+    - task: Docker@2
+      displayName: Build an image
+      inputs:
+        command: build
+        dockerfile: '$(Build.SourcesDirectory)/backend_api/backend_api_csharp/Dockerfile'
+        repository: $(IMAGE_NAME)
+        tags: $(TAG)
+
+    - task: Docker@2
+      displayName: Push image to Docker Hub
+      inputs:
+        containerRegistry: 'dockerhub-connection'
+        repository: $(IMAGE_NAME)
+        command: 'push'
+        tags: '$(TAG)'
+
+- stage: Deploy
+  displayName: Deploy to Container Apps
+  jobs:
+  - job: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+
+    - task: AzureContainerApps@1
+      displayName: Deploy new container version
+      inputs:
+        azureSubscription: 'azure-connection'
+        imageToDeploy: '$(IMAGE_NAME):$(TAG)'
+        containerAppName: '$(CONTAINERAPPS_APP)'
+        resourceGroup: '$(RESOURCE_GROUP)'
+        containerAppEnvironment: '$(CONTAINERAPPS_ENVIRONMENT)'
+        targetPort: '3500'
+        ingress: 'external'

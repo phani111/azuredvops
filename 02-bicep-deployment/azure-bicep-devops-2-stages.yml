@@ -1,0 +1,97 @@
+#This Azure Pipelines YAML file defines a two-stage deployment pipeline for a Bicep template that deploys a web app to Azure.
+
+#The first stage, "preDeploy", scans the Bicep template for any issues using the ARM Template Toolkit (ARMTTK) and previews the changes that would be made to the resource group using the "az deployment group what-if" command.
+
+#The second stage, "deployBicep", includes a manual validation step where a user must review and approve the changes before the deployment can proceed. Once approved, the pipeline deploys the Bicep template to the specified resource group using the "az deployment group create" command.
+
+#The pipeline is configured to use the following variables:
+#- `resourceGroupName`: The name of the resource group to deploy the resources to.
+#- `location`: The Azure region to deploy the resources to.
+#- `webAppName`: The name of the web app to be deployed.
+#- `templateFile`: The path to the Bicep template file to be deployed.
+
+name: Deploy Bicep files $(Build.BuildId)
+
+trigger: none
+# - main
+
+variables:
+  resourceGroupName: 'rg-bicep-demo-0023'
+  location: 'westeurope'
+  webAppName: 'bicep0023'
+  templateFile: '02-bicep-deployment/webapp-linux.bicep'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+- stage: preDeploy
+  jobs:
+  - job: scanWhatif
+    displayName: scan and run whatif
+    pool:
+      vmImage: windows-2022
+
+    steps:
+    
+    - task: RunARMTTKTests@1
+      displayName: Scan Bicep files
+      inputs:
+        templatelocation: '$(System.DefaultWorkingDirectory)\02-bicep-webapp'
+        resultLocation: '$(System.DefaultWorkingDirectory)\results'
+        allTemplatesMain: false
+        cliOutputResults: true
+        ignoreExitCode: true
+
+    - task: PublishTestResults@2
+      displayName: Publish Results
+      inputs:
+        testResultsFormat: 'NUnit'
+        testResultsFiles: '$(System.DefaultWorkingDirectory)\results\*-armttk.xml'
+      condition: always()
+
+    - task: AzureCLI@2
+      displayName: Preview Bicep Changes
+      inputs:
+        azureSubscription: 'Microsoft-Azure-0(17b12858-3960-4e6f-a663-a06fdae23428)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az --version
+          az group create --name $(resourceGroupName) --location $(location)
+          az deployment group what-if --resource-group $(resourceGroupName) \
+            --template-file $(templateFile) \
+            --parameters webAppName=$(webAppName)
+
+- stage: deployBicep
+  jobs:
+
+  - job: waitForValidation
+    displayName: Wait for external validation
+    pool: server
+    timeoutInMinutes: 4320 # job times out in 3 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 1440 # task times out in 1 day
+      inputs:
+        notifyUsers: 'houssem.dellai@live.com'
+        instructions: 'Please validate the build $(Build.BuildId) configuration and resume'
+        onTimeout: 'resume'
+
+  - job: deployAzure
+    displayName: deploy bicep to Azure
+    pool:
+      vmImage: 'ubuntu-latest'
+    dependsOn: [waitForValidation]
+
+    steps:
+    - task: AzureCLI@2
+      displayName: Deploy Bicep To Azure
+      inputs:
+        azureSubscription: 'Microsoft-Azure-0(17b12858-3960-4e6f-a663-a06fdae23428)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az deployment group create --resource-group $(resourceGroupName) \
+            --template-file $(templateFile) \
+            --parameters webAppName=$(webAppName)
